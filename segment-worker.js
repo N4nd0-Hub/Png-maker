@@ -1,6 +1,6 @@
 /* Neural inference stays off the UI thread. No image is uploaded. */
 "use strict";
-importScripts("./engine.js");
+importScripts("./engine.js?v=20261022b");
 const VERSION = "1.1.1";
 const CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@" + VERSION;
 const MODEL =
@@ -317,6 +317,11 @@ onmessage = async function (event) {
     } finally {
       mask.close();
     }
+    // Magic Touch predicts object membership, not physical transparency. Treat
+    // uncertain background as background instead of exporting a ghost of the
+    // entire poster. Edge reconstruction below supplies the antialiasing.
+    const rawProbability = probability;
+    probability = RecortaEngine.objectProbabilities(probability);
     status("Ajustando bordas na resolução original…");
     const low = new OffscreenCanvas(mw, mh),
       lx = low.getContext("2d", { willReadFrequently: true });
@@ -325,7 +330,7 @@ onmessage = async function (event) {
       rgba = original
         .getContext("2d", { willReadFrequently: true })
         .getImageData(0, 0, original.width, original.height).data;
-    const alpha = RecortaEngine.refineAlpha(
+    let alpha = RecortaEngine.refineAlpha(
       probability,
       lowRGBA,
       mw,
@@ -334,6 +339,36 @@ onmessage = async function (event) {
       original.width,
       original.height,
     );
+    if (data.detailAlpha && data.correction === "negative") {
+      const soft = RecortaEngine.refineAlpha(
+        rawProbability,
+        lowRGBA,
+        mw,
+        mh,
+        rgba,
+        original.width,
+        original.height,
+      );
+      alpha = RecortaEngine.mergeGuidedDetail(
+        data.detailAlpha,
+        soft,
+        "negative",
+      );
+    }
+    // Object-guided selection should not retain an unrelated logo or other
+    // disconnected artwork solely because the decoder gave it high confidence.
+    alpha = RecortaEngine.markedComponents(
+      alpha,
+      original.width,
+      original.height,
+      data.strokes,
+    );
+    if (data.detailAlpha && data.correction === "positive")
+      alpha = RecortaEngine.mergeGuidedDetail(
+        data.detailAlpha,
+        alpha,
+        "positive",
+      );
     postMessage(
       {
         type: "result",

@@ -334,8 +334,16 @@
                   − Remover região
                 </button>
               </div>
+              <label class="control-label" for="regionMethod"
+                >Método das marcações</label
+              >
+              <select id="regionMethod" class="region-method">
+                <option value="ai">IA · personagem e cenário</option>
+                <option value="color">Cores conectadas · ajuste local</option>
+              </select>
               <div class="selection-report" id="selectionReport" role="status">
-                Você pode incluir mais de um personagem.
+                Em cartazes, marque o personagem para manter e o desenho do
+                fundo para remover. Você pode incluir mais de um personagem.
               </div>
             </div>
             <details class="card local-card">
@@ -416,7 +424,7 @@
             </div>
             <div class="card">
               <label class="control-label" for="regionTolerance"
-                >Tolerância das regiões
+                >Tolerância do ajuste por cor
                 <span id="regionToleranceVal">85</span></label
               ><input
                 class="range"
@@ -428,9 +436,8 @@
                 aria-label="Tolerância das regiões"
               />
               <p class="mini-note">
-                No modo de fundo complexo, as marcações corrigem áreas de cor
-                conectadas. Use uma tolerância menor para contornos mais
-                fechados.
+                Usada apenas em “Cores conectadas”. Para cartazes e fundos com
+                várias cores, prefira “IA · personagem e cenário” em Recortar.
               </p>
             </div>
             <div class="card">
@@ -723,7 +730,7 @@
     </dialog>
     <div aria-live="polite" class="toast" id="toast" role="status"></div>
 
-    <script src="engine.js?v=20261022"></script>
-    <script src="app.js?v=20261022"></script>
+    <script src="engine.js?v=20261022b"></script>
+    <script src="app.js?v=20261022b"></script>
   </body>
 </html>

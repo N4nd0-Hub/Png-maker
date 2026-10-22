@@ -1188,6 +1188,14 @@ input,
 select {
   font: inherit;
 }
+.region-method {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line, #38343e);
+  border-radius: 9px;
+  color: var(--text, #f4f1ed);
+  background: var(--surface, #222127);
+}
 button {
   font-weight: 600;
 }

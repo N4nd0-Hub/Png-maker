@@ -397,6 +397,166 @@
     }
     return { alpha: region, pixels: tail };
   }
+  // IS-Net does not retain the identity of a subject. If the first correction is
+  // an exclusion, start the interactive model inside the current silhouette,
+  // away from the excluded area. The user can replace this seed by marking the
+  // character explicitly. Work on a bounded grid even for very large images.
+  function interiorSeed(alpha, w, h, strokes = []) {
+    const scale = Math.min(1, 320 / Math.max(w, h)),
+      sw = Math.max(2, Math.round(w * scale)),
+      sh = Math.max(2, Math.round(h * scale)),
+      distance = new Float32Array(sw * sh),
+      excluded = strokes
+        .filter((s) => s.mode === "negative")
+        .flatMap((s) => s.points || []);
+    for (let y = 1; y < sh - 1; y++)
+      for (let x = 1; x < sw - 1; x++) {
+        const nx = x / (sw - 1),
+          ny = y / (sh - 1),
+          p = Math.round(ny * (h - 1)) * w + Math.round(nx * (w - 1));
+        if (
+          alpha[p] >= 160 &&
+          !excluded.some(
+            (q) =>
+              Math.hypot((nx - q.x) * sw, (ny - q.y) * sh) <
+              Math.min(sw, sh) * 0.06,
+          )
+        )
+          distance[y * sw + x] = sw + sh;
+      }
+    for (let y = 1; y < sh - 1; y++)
+      for (let x = 1; x < sw - 1; x++) {
+        const p = y * sw + x;
+        if (distance[p])
+          distance[p] = Math.min(
+            distance[p],
+            distance[p - 1] + 1,
+            distance[p - sw] + 1,
+            distance[p - sw - 1] + Math.SQRT2,
+            distance[p - sw + 1] + Math.SQRT2,
+          );
+      }
+    let best = -1,
+      score = 1;
+    for (let y = sh - 2; y > 0; y--)
+      for (let x = sw - 2; x > 0; x--) {
+        const p = y * sw + x;
+        if (!distance[p]) continue;
+        distance[p] = Math.min(
+          distance[p],
+          distance[p + 1] + 1,
+          distance[p + sw] + 1,
+          distance[p + sw + 1] + Math.SQRT2,
+          distance[p + sw - 1] + Math.SQRT2,
+        );
+        const centrality = 1 - 0.25 * Math.hypot(x / sw - 0.5, y / sh - 0.5),
+          value = distance[p] * centrality;
+        if (value > score) {
+          score = value;
+          best = p;
+        }
+      }
+    return best < 0
+      ? null
+      : {
+          x: (best % sw) / (sw - 1),
+          y: Math.floor(best / sw) / (sh - 1),
+        };
+  }
+  function objectProbabilities(probability) {
+    const out = new Float32Array(probability.length);
+    for (let p = 0; p < out.length; p++)
+      out[p] = smooth((probability[p] - 0.35) / 0.3);
+    return out;
+  }
+  // Let interactive inference decide which object to retain, using the previous
+  // detailed silhouette to avoid making its feathers, feet or thin lines ghostly.
+  // Keep is additive and remove is subtractive, even when the neural decoder
+  // changes its opinion about another part of the image.
+  function mergeGuidedDetail(previous, guided, mode) {
+    if (previous.length !== guided.length) return guided;
+    const out = new Uint8ClampedArray(guided.length);
+    for (let p = 0; p < out.length; p++)
+      out[p] =
+        mode === "positive"
+          ? Math.max(previous[p], guided[p])
+          : Math.min(
+              previous[p],
+              Math.max(guided[p], previous[p] * smooth((guided[p] - 6) / 32)),
+            );
+    return out;
+  }
+  // Retain every component actually indicated by a positive prompt. This is
+  // object selection, unlike the optional dust cleaner which preserves islands.
+  // A scanline fill avoids allocating a full-resolution integer label map/queue.
+  function markedComponents(alpha, w, h, strokes = []) {
+    const points = strokes
+      .filter((s) => s.mode === "positive")
+      .flatMap((s) => s.points || []);
+    if (!points.length) return alpha;
+    const out = new Uint8ClampedArray(alpha.length),
+      stack = [];
+    for (const point of points) {
+      const cx = clamp(Math.round(point.x * (w - 1)), 0, w - 1),
+        cy = clamp(Math.round(point.y * (h - 1)), 0, h - 1);
+      let seed = -1,
+        nearest = Infinity;
+      for (let y = Math.max(0, cy - 4); y <= Math.min(h - 1, cy + 4); y++)
+        for (let x = Math.max(0, cx - 4); x <= Math.min(w - 1, cx + 4); x++) {
+          const d = (cx - x) ** 2 + (cy - y) ** 2;
+          if (alpha[y * w + x] >= 12 && d < nearest) {
+            nearest = d;
+            seed = y * w + x;
+          }
+        }
+      if (seed >= 0) stack.push(seed);
+    }
+    // A failed/ambiguous prompt must not erase the previous decoder result.
+    if (!stack.length) return alpha;
+    while (stack.length) {
+      const p = stack.pop();
+      if (out[p] || alpha[p] < 12) continue;
+      const y = Math.floor(p / w);
+      let left = p % w,
+        right = left;
+      while (
+        left > 0 &&
+        alpha[y * w + left - 1] >= 12 &&
+        !out[y * w + left - 1]
+      )
+        left--;
+      while (
+        right < w - 1 &&
+        alpha[y * w + right + 1] >= 12 &&
+        !out[y * w + right + 1]
+      )
+        right++;
+      for (let x = left; x <= right; x++) out[y * w + x] = alpha[y * w + x];
+      for (const row of [y - 1, y + 1]) {
+        if (row < 0 || row >= h) continue;
+        let inRun = false;
+        for (
+          let x = Math.max(0, left - 1);
+          x <= Math.min(w - 1, right + 1);
+          x++
+        ) {
+          const q = row * w + x,
+            valid = alpha[q] >= 12 && !out[q];
+          if (valid && !inRun) stack.push(q);
+          inRun = valid;
+        }
+      }
+    }
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x;
+        if (!alpha[p] || alpha[p] >= 12) continue;
+        for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++)
+          for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++)
+            if (out[yy * w + xx] >= 12) out[p] = alpha[p];
+      }
+    return out;
+  }
   const api = {
     boxMean,
     refineAlpha,
@@ -404,6 +564,10 @@
     flatBackground,
     reduceWhiteHalo,
     floodRegion,
+    interiorSeed,
+    markedComponents,
+    mergeGuidedDetail,
+    objectProbabilities,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.RecortaEngine = api;

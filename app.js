@@ -314,7 +314,7 @@
   }
   function getWorker() {
     if (worker) return worker;
-    worker = new Worker("./segment-worker.js?v=20261022");
+    worker = new Worker("./segment-worker.js?v=20261022b");
     worker.onmessage = function (event) {
       var d = event.data;
       if (d.type === "status") {
@@ -421,6 +421,20 @@
   function replayEdits(mask, edits) {
     var x = mask.getContext("2d");
     edits.forEach(function (edit) {
+      if (edit.spans) {
+        var im = x.getImageData(0, 0, mask.width, mask.height);
+        for (var i = 0; i < edit.spans.length; i += 2)
+          for (
+            var p = edit.spans[i];
+            p < edit.spans[i] + edit.spans[i + 1];
+            p++
+          ) {
+            im.data[p * 4] = im.data[p * 4 + 1] = im.data[p * 4 + 2] = 255;
+            im.data[p * 4 + 3] = edit.mode === "erase" ? 0 : 255;
+          }
+        x.putImageData(im, 0, 0);
+        return;
+      }
       x.save();
       x.globalCompositeOperation =
         edit.mode === "erase" ? "destination-out" : "source-over";
@@ -442,7 +456,7 @@
   }
   async function runAI(nx, ny, mode, reset, smart, stroke) {
     if (!S.image || S.aiBusy) return;
-    if (reset === false && S.maskOrigin === "complex")
+    if (reset === false && $("#regionMethod").value === "color")
       return runRegional(stroke || { mode: mode, points: [{ x: nx, y: ny }] });
     var job = ++S.job,
       previous = S.tool,
@@ -451,6 +465,29 @@
     candidate.push(
       stroke || { mode: mode || "positive", points: [{ x: nx, y: ny }] },
     );
+    // IS-Net has no prompts. A correction must switch to the interactive model,
+    // carrying an interior foreground seed as well as the user's exclusion.
+    if (
+      reset === false &&
+      !candidate.some(function (s) {
+        return s.mode === "positive" || s.mode === "lasso";
+      })
+    ) {
+      var seed = RecortaEngine.interiorSeed(
+        maskAlpha(S.mask),
+        S.mask.width,
+        S.mask.height,
+        candidate,
+      );
+      if (!seed) {
+        choose("aiPick");
+        return say(
+          "Marque dentro do personagem antes de remover o fundo.",
+          "bad",
+        );
+      }
+      candidate.unshift({ mode: "positive", points: [seed], inferred: true });
+    }
     var requestStrokes = candidate;
     var edits = reset === false ? clone(S.manualEdits) : [],
       key = sourceKey() + "|" + detail;
@@ -470,7 +507,14 @@
         return;
       }
       var result = await askWorker(
-        { type: "segment", key: key, strokes: requestStrokes, detail: detail },
+        {
+          type: "segment",
+          key: key,
+          strokes: requestStrokes,
+          detail: detail,
+          correction: reset === false ? mode : null,
+          detailAlpha: reset === false && S.mask ? maskAlpha(S.mask) : null,
+        },
         bitmap,
       );
       if (job !== S.job) return;
@@ -486,10 +530,15 @@
       S.ai = true;
       S.aiStrokes = candidate;
       S.manualEdits = edits;
-      S.aiSeed = { x: nx, y: ny };
+      var foreground = candidate.find(function (s) {
+        return s.mode === "positive";
+      });
+      S.aiSeed = foreground ? clone(foreground.points[0]) : null;
       replayEdits(mask, edits);
       S.aiBusy = false;
       setMask(mask, "ai");
+      $("#selectionReport").textContent =
+        "A IA refez o recorte com suas marcações. Sobrou cartaz? Marque para remover. Inclua partes separadas com Manter região.";
       aiState("Pronta", "ready");
     } catch (error) {
       if (job !== S.job || error.name === "AbortError") return;
@@ -545,9 +594,20 @@
         negative = stroke.mode === "negative";
       for (var i = 0; i < a.length; i++)
         a[i] = negative ? Math.min(a[i], 255 - b[i]) : Math.max(a[i], b[i]);
+      var spans = [];
+      for (var p = 0; p < b.length; ) {
+        if (!b[p]) {
+          p++;
+          continue;
+        }
+        var start = p;
+        while (p < b.length && b[p]) p++;
+        spans.push(start, p - start);
+      }
+      S.manualEdits.push({ mode: negative ? "erase" : "add", spans: spans });
       S.aiBusy = false;
-      S.aiStrokes.push(stroke);
-      setMask(alphaCanvas(a, r.width, r.height), "complex");
+      // Color fills are edits, not semantic prompts for later neural inference.
+      setMask(alphaCanvas(a, r.width, r.height), S.maskOrigin);
       $("#selectionReport").textContent =
         "Região ajustada pelas cores e pelo contorno. O restante do recorte foi preservado.";
       aiState("Região ajustada", "ready");
