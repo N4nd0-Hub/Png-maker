@@ -557,7 +557,28 @@
       }
     return out;
   }
+  // Measure the composed image, including source transparency. Near-invisible
+  // alpha left by segmentation must not keep an otherwise empty canvas frame.
+  // If the entire artwork is faint, retain it instead of treating it as empty.
+  function rgbaBounds(rgba, w, h, minAlpha = 8) {
+    function measure(threshold) {
+      let minX = w, minY = h, maxX = -1, maxY = -1;
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          if (rgba[(y * w + x) * 4 + 3] < threshold) continue;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      return maxX < 0 ? null : {
+        x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1,
+      };
+    }
+    return measure(minAlpha) || (minAlpha > 1 ? measure(1) : null);
+  }
   const api = {
+    rgbaBounds,
     boxMean,
     refineAlpha,
     cleanComponents,
@@ -572,3 +593,4 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.RecortaEngine = api;
 })(typeof self !== "undefined" ? self : globalThis);
+

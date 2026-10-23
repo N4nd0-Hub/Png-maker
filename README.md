@@ -9,7 +9,7 @@ Editor de recorte e recoloração, publicado em https://n4nd0-hub.github.io/Png-
 3. Use **Manter região** e **Remover região** para orientar a IA com exemplos do personagem e do fundo. Isso também funciona depois da remoção detalhada: o modelo interativo reavalia o recorte usando todas as marcações. Se a primeira marcação for para remover, o editor sugere um ponto interior no recorte como personagem; use **Marcar personagem** para escolher outro. Em cartazes, risque dentro do personagem e depois no fundo que sobrou. Marque também partes separadas que deseja manter; logos desconectados e sem marcação são descartados na seleção guiada.
 4. Outra opção é **Marcar personagem**: clique ou risque dentro dele. **Contorno assistido** usa o contorno desenhado como orientação para o MediaPipe.
 5. Compare o original e o recorte. A aba **Ajustar** oferece pincéis, limpeza de pequenos resíduos, redução de halo claro, suavização e margem. **Cores** preserva os controles de recoloração por espectro.
-6. Baixe um PNG transparente. A imagem mantém a resolução de seus pixels e as bordas vazias são recortadas.
+6. Baixe um PNG transparente. A imagem mantém a resolução de seus pixels e o arquivo é ajustado às bordas visíveis do personagem, considerando a transparência da imagem final, tanto em recortes por IA quanto manuais e em imagens recoloridas. Baixar, Copiar e Prévia usam as mesmas dimensões. **Margem transparente** adiciona somente o espaço que você escolher; deixe em **0 px** para um arquivo justo ao personagem. Resíduos quase invisíveis nas extremidades não mantêm o quadro original inteiro.
 
 Fundos e personagens com cores muito parecidas ainda podem exigir marcações ou pincéis. A limpeza não é aplicada automaticamente: partes separadas, como chamas e efeitos, são preservadas por padrão.
 
@@ -49,3 +49,4 @@ node --test tests/*.test.cjs
 ## Referências e licenças
 
 Consulte [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Os modelos e os motores externos mantêm suas licenças e autores originais.
+

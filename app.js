@@ -63,6 +63,7 @@
     colorStrength: 100,
     maskRevision: 0,
     processed: null,
+    exportCache: null,
     halo: 0,
     compare: 50,
     manualEdits: [],
@@ -123,6 +124,7 @@
   function refreshMask() {
     S.maskRevision++;
     S.processed = null;
+    S.exportCache = null;
     S.maskBounds = null;
     if (!S.mask) {
       S.maskOverlay = null;
@@ -1101,7 +1103,9 @@
       hasMask = !!(S.mask && S.selection && S.selection.type === "mask"),
       hasSelection = img && valid(S.selection),
       ready = img && (hasSelection || !!S.editCanvas),
-      busy = S.aiBusy;
+      busy = S.aiBusy,
+      rendered = ready ? output() : null;
+    ready = ready && !!rendered;
     $$(".tool").forEach(function (b) {
       b.disabled =
         !img || busy || (b.hasAttribute("data-requires-mask") && !hasMask);
@@ -1139,28 +1143,23 @@
     });
     $("#empty").classList.toggle("hidden", img);
     $("#dot").classList.toggle("ready", img);
-    var b = hasSelection
-        ? bounds(S.selection)
-        : S.editCanvas
-          ? { x: 0, y: 0, w: S.image.naturalWidth, h: S.image.naturalHeight }
-          : null,
-      e = hasSelection ? S.padding + Math.ceil(S.feather * 2) : 0;
     $("#shapeType").textContent = hasSelection
       ? names[S.selection.type]
       : S.editCanvas
         ? "Imagem inteira"
         : "—";
-    $("#outW").textContent = b ? Math.ceil(b.w + e * 2) + " px" : "—";
-    $("#outH").textContent = b ? Math.ceil(b.h + e * 2) + " px" : "—";
-    $("#cutStatus").textContent = hasSelection
-      ? Math.round(b.w) + " × " + Math.round(b.h) + " px"
+    $("#outW").textContent = rendered ? rendered.width + " px" : "—";
+    $("#outH").textContent = rendered ? rendered.height + " px" : "—";
+    $("#cutStatus").textContent = hasSelection && rendered
+      ? rendered.width + " × " + rendered.height + " px"
       : S.editCanvas
         ? "Cores editadas"
         : "Sem recorte";
-    $("#exportHint").textContent = hasSelection
-      ? "PNG transparente, na resolução original."
-      : S.editCanvas
-        ? "Cores editadas. A imagem já pode ser exportada."
+    $("#exportHint").textContent = !rendered && (hasSelection || S.editCanvas)
+      ? "A imagem não contém pixels visíveis. Marque uma parte para manter."
+      : rendered
+      ? (S.padding ? "PNG ajustado ao personagem com a margem escolhida."
+        : "PNG ajustado ao personagem, sem espaço transparente sobrando.")
         : "Seu PNG aparece aqui quando o recorte estiver pronto.";
     $("#s1").className = img ? "step done" : "step active";
     $("#s2").className = ready ? "step done" : img ? "step active" : "step";
@@ -1224,6 +1223,7 @@
       S.guiding = null;
       S.down = false;
       S.processed = null;
+      S.exportCache = null;
       S.maskRevision++;
       S.tool = "aiPick";
       $$("[data-tool]").forEach(function (b) {
@@ -1506,9 +1506,35 @@
     draw();
     say("Cores originais restauradas", "ok");
   }
+  function trimOutput(out) {
+    var pixels = out.getContext("2d", { willReadFrequently: true })
+        .getImageData(0, 0, out.width, out.height).data,
+      b = RecortaEngine.rgbaBounds(pixels, out.width, out.height);
+    if (!b) return null;
+    var padding = Math.max(0, Math.round(S.padding)),
+      width = b.w + padding * 2, height = b.h + padding * 2;
+    if (b.x === 0 && b.y === 0 && width === out.width && height === out.height && !padding)
+      return out;
+    var cropped = document.createElement("canvas");
+    cropped.width = width;
+    cropped.height = height;
+    var cx = cropped.getContext("2d");
+    cx.imageSmoothingEnabled = false;
+    cx.drawImage(out, b.x, b.y, b.w, b.h,
+      padding, padding, b.w, b.h);
+    return cropped;
+  }
   function output() {
     var hasSelection = valid(S.selection);
     if (!hasSelection && !S.editCanvas) return null;
+    var key = [S.loadId, S.maskRevision, S.editVersion, S.feather,
+      S.padding, JSON.stringify(S.selection)].join("|");
+    if (S.exportCache && S.exportCache.key === key) return S.exportCache.canvas;
+    function finish(out) {
+      var cropped = trimOutput(out);
+      S.exportCache = { key: key, canvas: cropped };
+      return cropped;
+    }
     var b = hasSelection
         ? bounds(S.selection)
         : { x: 0, y: 0, w: S.image.naturalWidth, h: S.image.naturalHeight },
@@ -1518,13 +1544,13 @@
     out.width = Math.max(1, Math.ceil(b.w + e * 2));
     out.height = Math.max(1, Math.ceil(b.h + e * 2));
     var o = out.getContext("2d");
-    o.imageSmoothingQuality = "high";
+    o.imageSmoothingEnabled = false;
     if (hasSelection && S.selection.type === "mask") {
       o.drawImage(processedCanvas(), -b.x + e, -b.y + e);
-      return out;
+      return finish(out);
     }
     o.drawImage(source(), -b.x + e, -b.y + e);
-    if (!hasSelection) return out;
+    if (!hasSelection) return finish(out);
     var mcan = document.createElement("canvas");
     mcan.width = out.width;
     mcan.height = out.height;
@@ -1573,7 +1599,7 @@
     }
     o.globalCompositeOperation = "destination-in";
     o.drawImage(mcan, 0, 0);
-    return out;
+    return finish(out);
   }
   function filename() {
     var n =
@@ -2128,3 +2154,4 @@
   resize();
   ui();
 })();
+
